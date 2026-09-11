@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Hermes Chrome",
+  "version": "1.0.2",
+  "description": "Let Hermes Agent control this Chrome browser — Claude in Chrome equivalent. CDP clicks, typing, snapshots, tabs.",
+  "permissions": [
+    "debugger",
+    "tabs",
+    "tabGroups",
+    "scripting",
+    "storage",
+    "sidePanel",
+    "alarms",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1:19882/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Hermes Chrome",
+    "default_icon": {
+      "16": "icons/lady-16.png",
+      "32": "icons/lady-32.png",
+      "48": "icons/lady-48.png",
+      "128": "icons/lady-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/lady-16.png",
+    "32": "icons/lady-32.png",
+    "48": "icons/lady-48.png",
+    "128": "icons/lady-128.png"
+  }
+}

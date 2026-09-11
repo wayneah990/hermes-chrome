@@ -1,0 +1,11 @@
+name: hermes-chrome
+version: "1.0.0"
+description: "Drive the user's real Chrome like Claude in Chrome — CDP, no computer_use."
+author: Hermes Chrome contributors
+kind: standalone
+platforms:
+  - windows
+  - linux
+  - macos
+provides_tools:
+  - chrome
