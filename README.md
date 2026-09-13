@@ -19,6 +19,7 @@ Your Chrome windows & tabs
 
 - **`chrome` tool** — `status`, `tabs`, `navigate`, `snapshot` (refs `e1`…), `click`/`fill`/`type`/`key`, `screenshot`, `js`
 - **Side panel chat** — type an instruction on the current tab (same idea as Claude in Chrome)
+- **Shared thread** — Chrome side panel and Hermes session `hermes-chrome-panel` show the same questions and answers
 - Existing logins stay; orange **Hermes** tab group for agent tabs
 - Copy icon on messages (ChatGPT-style)
 

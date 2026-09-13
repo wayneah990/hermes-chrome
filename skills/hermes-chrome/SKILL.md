@@ -1,7 +1,7 @@
 ---
 name: hermes-chrome
 description: Drive real Chrome via the Hermes Chrome extension. Prefer over computer_use.
-version: 1.0.3
+version: 1.0.4
 ---
 
 # Hermes Chrome
@@ -15,6 +15,10 @@ Claude-in-Chrome for Hermes. The `chrome` tool talks to the **user's real Google
 - Form fill, scrape, click, screenshot, JS in-page
 
 Don't use for: native desktop apps (that's `computer_use`).
+
+## Shared thread
+
+Chrome side panel and Hermes Desktop session **hermes-chrome-panel** are the same conversation. Every user question and assistant answer appears on both. Do not wrap the user's text in a system preamble — the query is already their message.
 
 ## Prerequisites
 

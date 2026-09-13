@@ -2,7 +2,10 @@ const RELAY = "http://127.0.0.1:19882";
 const $ = (id) => document.getElementById(id);
 let token = "";
 let busy = false;
+let sending = false;
 let lastJobId = "";
+let lastSig = "";
+let pendingUser = "";
 
 function setState(text, cls) {
   $("state").textContent = text;
@@ -19,7 +22,6 @@ function addMsg(role, text) {
   const chat = role === "me" || String(role).startsWith("bot");
   if (!chat) {
     $("log").appendChild(bubble);
-    $("log").scrollTop = $("log").scrollHeight;
     return bubble;
   }
   const row = document.createElement("div");
@@ -49,8 +51,42 @@ function addMsg(role, text) {
   row.appendChild(bubble);
   row.appendChild(btn);
   $("log").appendChild(row);
-  $("log").scrollTop = $("log").scrollHeight;
   return bubble;
+}
+
+function thinkingLabel(job) {
+  const started = Number(job && job.started) || 0;
+  const sec = started ? Math.max(0, Math.floor(Date.now() / 1000 - started)) : 0;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return m ? `Hermes is working on this page… ${m}m ${s}s` : `Hermes is working on this page… ${s}s`;
+}
+
+function renderMessages(messages, job) {
+  const list = Array.isArray(messages) ? messages : [];
+  const running = job && job.status === "running";
+  const last = list.length ? list[list.length - 1] : null;
+  const showPending = !!(pendingUser && (!last || last.role !== "user" || last.text !== pendingUser));
+  const sig = JSON.stringify({
+    n: list.length,
+    lastId: last ? last.id : 0,
+    lastText: last ? last.text : "",
+    st: job && job.status,
+    pending: showPending ? pendingUser : "",
+    tick: running ? Math.floor(Date.now() / 1000) : 0,
+  });
+  if (sig === lastSig) return;
+  lastSig = sig;
+  const log = $("log");
+  const stick = log.scrollHeight - log.scrollTop < log.clientHeight + 48;
+  log.innerHTML = "";
+  addMsg("sys", "Same thread as Hermes chat “hermes-chrome-panel”. Every question and answer shows here and there.");
+  for (const m of list) {
+    addMsg(m.role === "user" ? "me" : "bot", m.text);
+  }
+  if (showPending) addMsg("me", pendingUser);
+  if (running) addMsg("bot busy", thinkingLabel(job));
+  if (stick) log.scrollTop = log.scrollHeight;
 }
 
 async function headers() {
@@ -89,14 +125,34 @@ async function currentTab() {
   return t ? { tab_id: t.id, url: t.url || "", title: t.title || "" } : {};
 }
 
+async function tick() {
+  if (!token) return;
+  try {
+    const r = await fetch(RELAY + "/ask", { headers: await headers() });
+    const data = await r.json();
+    const msgs = data.messages || [];
+    const job = data.job || {};
+    renderMessages(msgs, job);
+    if (pendingUser && msgs.some((m) => m.role === "user" && m.text === pendingUser)) {
+      pendingUser = "";
+    }
+    const running = job.status === "running" || sending;
+    busy = running;
+    $("send").disabled = running;
+  } catch (e) {
+    /* relay briefly down — keep last paint */
+  }
+}
+
 async function send() {
   const text = $("input").value.trim();
-  if (!text || busy) return;
+  if (!text || busy || sending) return;
+  sending = true;
   busy = true;
+  pendingUser = text;
+  lastSig = "";
   $("send").disabled = true;
   $("input").value = "";
-  addMsg("me", text);
-  const thinking = addMsg("bot busy", "Hermes is working on this page…");
   try {
     if (!token) await pair();
     const tab = await currentTab();
@@ -107,66 +163,26 @@ async function send() {
     });
     const data = await r.json();
     if (!data.ok) {
-      thinking.className = "msg bot";
-      thinking.textContent = data.error === "busy"
-        ? "Hermes is still working on the last request."
-        : (data.error || "ask failed");
+      pendingUser = "";
+      sending = false;
       busy = false;
       $("send").disabled = false;
+      addMsg("bot", data.error === "busy"
+        ? "Hermes is still working on the last request."
+        : (data.error || "ask failed"));
       return;
     }
     lastJobId = data.id;
-    await waitJob(thinking);
+    sending = false;
+    await tick();
   } catch (e) {
-    thinking.className = "msg bot";
-    thinking.textContent = String(e);
+    pendingUser = "";
+    sending = false;
+    busy = false;
+    $("send").disabled = false;
+    addMsg("bot", String(e));
   }
-  busy = false;
-  $("send").disabled = false;
   $("input").focus();
-}
-
-async function waitJob(el) {
-  for (let i = 0; i < 900; i++) {
-    await new Promise((r) => setTimeout(r, 1000));
-    const r = await fetch(RELAY + "/ask", { headers: await headers() });
-    const data = await r.json();
-    const job = data.job || {};
-    if (job.id && lastJobId && job.id !== lastJobId) continue;
-    if (job.status === "running") {
-      const m = Math.floor((i + 1) / 60);
-      const s = (i + 1) % 60;
-      el.textContent = m ? `Hermes is working on this page… ${m}m ${s}s` : `Hermes is working on this page… ${s}s`;
-      continue;
-    }
-    el.className = "msg bot";
-    if (job.status === "done") {
-      el.textContent = cleanReply(job.reply) || "(no text)";
-    } else {
-      el.textContent = (job.error || "failed") + (job.reply ? "\n\n" + cleanReply(job.reply) : "");
-    }
-    return;
-  }
-  el.className = "msg bot";
-  el.textContent = "Still waiting after 15 minutes — Hermes may still be running. Don't type Continue; open the panel later or send the task again.";
-}
-
-function cleanReply(text) {
-  if (!text) return "";
-  return String(text)
-    .split("\n")
-    .filter((ln) => {
-      const t = ln.trim();
-      if (!t) return true;
-      if (/^Warning: Unknown toolsets/i.test(t)) return false;
-      if (/Reached maximum iterations/i.test(t)) return false;
-      if (/^session_id:/i.test(t)) return false;
-      if (/^\[tool\]/.test(t)) return false;
-      if (/tool_choice was set/i.test(t)) return false;
-      return true;
-    })
-    .join("\n")
-    .trim();
 }
 
 $("send").onclick = send;
@@ -177,9 +193,10 @@ $("input").addEventListener("keydown", (e) => {
   }
 });
 
-addMsg("sys", "Claude-in-Chrome for Hermes. Type an instruction for this tab.");
-pair().then(ping).catch((e) => {
+addMsg("sys", "Same thread as Hermes chat “hermes-chrome-panel”. Every question and answer shows here and there.");
+pair().then(() => { ping(); tick(); }).catch((e) => {
   setState("connect failed", "");
   addMsg("sys", String(e));
 });
 setInterval(ping, 4000);
+setInterval(tick, 1000);

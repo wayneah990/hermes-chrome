@@ -5,6 +5,8 @@ Stdlib only. Threaded HTTP server bound to 127.0.0.1:19882.
   GET  /status              relay + extension health
   POST /pair                first-time extension handshake, returns token
   GET  /pull?wait=20        extension long-poll; 200 command | 204 empty
+  GET  /ask                 current job + shared transcript (same thread as Desktop)
+  POST /ask                 send a user message into that thread
   POST /result              extension posts command result
   POST /cmd                 agent sends a command and blocks for the result
   POST /screenshot          extension uploads a PNG (base64) → saved on D:
@@ -17,6 +19,7 @@ import json
 import os
 import secrets
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -29,7 +32,8 @@ from urllib.parse import parse_qs, urlparse
 
 HOST = "127.0.0.1"
 PORT = 19882
-VERSION = "1.0.3"
+VERSION = "1.0.4"
+SESSION_TITLE = "hermes-chrome-panel"
 DEFAULT_CMD_TIMEOUT = 60.0
 PULL_MAX_WAIT = 12.0
 EXTENSION_STALE_S = 25.0
@@ -53,6 +57,7 @@ _ask_job: Dict[str, Any] = {
     "error": "",
     "started": 0.0,
 }
+_msg_cache: list = []
 
 
 def state_dir() -> Path:
@@ -159,6 +164,132 @@ def ask_snapshot() -> Dict[str, Any]:
         return dict(_ask_job)
 
 
+def _state_dbs() -> list:
+    dbs: list = []
+    seen = set()
+    home = os.environ.get("HERMES_HOME") or ""
+    local = Path(os.environ.get("LOCALAPPDATA") or str(Path.home()))
+    candidates = []
+    if home:
+        candidates.append(Path(home) / "state.db")
+    candidates.append(local / "hermes" / "state.db")
+    profiles = local / "hermes" / "profiles"
+    if profiles.is_dir():
+        candidates.extend(sorted(profiles.glob("*/state.db")))
+    for p in candidates:
+        try:
+            key = str(p.resolve()) if p.exists() else str(p)
+        except OSError:
+            key = str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        if p.is_file():
+            dbs.append(p)
+    return dbs
+
+
+def _message_text(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, bytes):
+        try:
+            content = content.decode("utf-8", "replace")
+        except Exception:
+            return ""
+    if isinstance(content, str):
+        raw = content.strip()
+        if raw.startswith("[") or raw.startswith("{"):
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                return content
+            return _message_text(data)
+        return content
+    if isinstance(content, dict):
+        for key in ("text", "content", "body"):
+            if key in content:
+                return _message_text(content.get(key))
+        return ""
+    if isinstance(content, list):
+        parts = [_message_text(p) for p in content]
+        return "\n".join(p for p in parts if p)
+    return str(content)
+
+
+def _unwrap_user(text: str) -> str:
+    """Drop the chrome-panel wrapper so both UIs show the real question."""
+    text = text or ""
+    for marker in (" said:\n", " said:\r\n"):
+        idx = text.find(marker)
+        if idx != -1:
+            return text[idx + len(marker) :].strip()
+    return text.strip()
+
+
+def _clean_reply(text: str) -> str:
+    if not text:
+        return ""
+    keep = []
+    for ln in str(text).splitlines():
+        t = ln.strip()
+        if not t:
+            keep.append(ln)
+            continue
+        if t.startswith("Warning: Unknown toolsets"):
+            continue
+        if "Reached maximum iterations" in t:
+            continue
+        if t.lower().startswith("session_id:"):
+            continue
+        if t.startswith("[tool]"):
+            continue
+        if "tool_choice was set" in t:
+            continue
+        keep.append(ln)
+    return "\n".join(keep).strip()
+
+
+def panel_messages() -> list:
+    """User + assistant bubbles from the shared hermes-chrome-panel session."""
+    global _msg_cache
+    for db in _state_dbs():
+        try:
+            uri = f"file:{db.as_posix()}?mode=ro"
+            con = sqlite3.connect(uri, uri=True, timeout=1.5)
+            row = con.execute(
+                "SELECT id FROM sessions WHERE title=? AND IFNULL(archived,0)=0 "
+                "ORDER BY last_activity_at DESC LIMIT 1",
+                (SESSION_TITLE,),
+            ).fetchone()
+            if not row:
+                con.close()
+                continue
+            sid = row[0]
+            rows = con.execute(
+                "SELECT id, role, content, timestamp FROM messages "
+                "WHERE session_id=? AND role IN ('user','assistant') "
+                "AND IFNULL(active,1)=1 "
+                "ORDER BY timestamp ASC, id ASC",
+                (sid,),
+            ).fetchall()
+            con.close()
+            out = []
+            for mid, role, content, ts in rows:
+                text = _message_text(content)
+                if role == "user":
+                    text = _unwrap_user(text)
+                text = _clean_reply(text)
+                if not text:
+                    continue
+                out.append({"id": int(mid) if mid is not None else 0, "role": role, "text": text, "ts": ts})
+            _msg_cache = out
+            return out
+        except Exception:
+            continue
+    return list(_msg_cache)
+
+
 def _hermes_bin() -> str:
     found = shutil.which("hermes")
     if found:
@@ -187,13 +318,15 @@ def _run_ask(job_id: str, prompt: str) -> None:
             "--query-file",
             str(prompt_file),
             "-c",
-            "hermes-chrome-panel",
+            SESSION_TITLE,
             "--create-if-missing",
             "-Q",
             "--source",
             "chrome",
             "--max-turns",
             "300",
+            "-s",
+            "hermes-chrome",
         ]
         proc = subprocess.run(
             cmd,
@@ -204,7 +337,7 @@ def _run_ask(job_id: str, prompt: str) -> None:
             errors="replace",
             env=env,
         )
-        reply = (proc.stdout or "").strip()
+        reply = _clean_reply((proc.stdout or "").strip())
         err = (proc.stderr or "").strip()
         with _ask_lock:
             if _ask_job.get("id") != job_id:
@@ -229,18 +362,6 @@ def start_ask(text: str, *, url: str = "", title: str = "", tab_id: Any = None) 
         if _ask_job.get("status") == "running":
             return {"ok": False, "error": "busy", "job": dict(_ask_job)}
         job_id = uuid.uuid4().hex[:10]
-        prompt = (
-            "You are Hermes talking through the Hermes Chrome side panel "
-            "(Claude-in-Chrome equivalent). The user is in Google Chrome.\n"
-            f"Current tab title: {title or '(unknown)'}\n"
-            f"Current tab url: {url or '(unknown)'}\n"
-            f"Current tab_id: {tab_id if tab_id is not None else '(use chrome tabs/snapshot)'}\n\n"
-            "Drive THIS Chrome with the chrome tool. Do not use computer_use or browser_exec. "
-            "If they only gave a URL, navigate to it and stop — no snapshot. "
-            "Snapshot only when you will click or fill, then act by ref. "
-            "Answer in the same language the user used.\n\n"
-            f"The user said:\n{text}\n"
-        )
         _ask_job.update(
             {
                 "status": "running",
@@ -250,9 +371,11 @@ def start_ask(text: str, *, url: str = "", title: str = "", tab_id: Any = None) 
                 "log": "",
                 "error": "",
                 "started": time.time(),
+                "url": url,
+                "title": title,
             }
         )
-    threading.Thread(target=_run_ask, args=(job_id, prompt), name="hermes-chrome-ask", daemon=True).start()
+    threading.Thread(target=_run_ask, args=(job_id, text), name="hermes-chrome-ask", daemon=True).start()
     return {"ok": True, "id": job_id, "status": "running"}
 
 
@@ -330,7 +453,7 @@ class _Handler(BaseHTTPRequestHandler):
             if not self._token_ok():
                 self._send(401, {"ok": False, "error": "bad_token"})
                 return
-            self._send(200, {"ok": True, "job": ask_snapshot()})
+            self._send(200, {"ok": True, "job": ask_snapshot(), "messages": panel_messages()})
             return
 
         if path == "/pull":
