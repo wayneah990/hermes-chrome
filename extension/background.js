@@ -10,11 +10,13 @@ chrome.runtime.onInstalled.addListener(async () => {
     await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   } catch (_) {}
   chrome.alarms.create("hermes-keep", { periodInMinutes: 0.5 });
+  await wipeDebugUi();
   await ensureOffscreen();
   startPoll();
 });
 chrome.runtime.onStartup.addListener(async () => {
   chrome.alarms.create("hermes-keep", { periodInMinutes: 0.5 });
+  await wipeDebugUi();
   await ensureOffscreen();
   startPoll();
 });
@@ -42,6 +44,30 @@ if (chrome.windows && chrome.windows.onCreated) {
 
 ensureOffscreen();
 startPoll();
+wipeDebugUi();
+
+async function wipeDebugUi() {
+  /* Reload/start must drop debugger infobars and the gold driving pill. */
+  try {
+    const targets = await chrome.debugger.getTargets();
+    for (const t of targets || []) {
+      if (!t || !t.attached) continue;
+      try {
+        if (t.tabId) await chrome.debugger.detach({ tabId: t.tabId });
+        else if (t.id) await chrome.debugger.detach({ targetId: t.id });
+      } catch (_) {}
+      if (t.tabId) attached.delete(t.tabId);
+    }
+  } catch (_) {}
+  attached.clear();
+  let tabs = [];
+  try {
+    tabs = await chrome.tabs.query({});
+  } catch (_) {}
+  for (const tab of tabs) {
+    if (tab && tab.id) unmarkDriven(tab.id);
+  }
+}
 
 async function ensureOffscreen() {
   if (!chrome.offscreen) return;

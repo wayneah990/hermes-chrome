@@ -23,6 +23,7 @@ Your Chrome windows & tabs
 - **Alt+H** — open the side panel (customize at `chrome://extensions/shortcuts`)
 - Unsent draft survives closing the panel
 - Gold pill on a tab while Hermes is driving it
+- Drag **images or PDFs** onto the side panel (or paste / paperclip)
 - Existing logins stay; orange **Hermes** tab group for agent tabs
 - Copy icon on messages (ChatGPT-style)
 

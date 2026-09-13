@@ -1,5 +1,5 @@
 name: hermes-chrome
-version: "1.0.5"
+version: "1.0.6"
 description: "Drive the user's real Chrome like Claude in Chrome — CDP, no computer_use."
 author: Hermes Chrome contributors
 kind: standalone

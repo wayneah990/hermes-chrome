@@ -142,7 +142,7 @@ async function tick() {
     const msgs = data.messages || [];
     const job = data.job || {};
     renderMessages(msgs, job);
-    if (pendingUser && msgs.some((m) => m.role === "user" && m.text === pendingUser)) {
+    if (pendingUser && msgs.some((m) => m.role === "user" && (m.text === pendingUser || m.text.startsWith(pendingUser)))) {
       pendingUser = "";
     }
     const running = job.status === "running" || sending;
@@ -153,23 +153,78 @@ async function tick() {
   }
 }
 
+let pendingFiles = [];
+
+function okFile(f) {
+  if (!f) return false;
+  const name = (f.name || "").toLowerCase();
+  const type = (f.type || "").toLowerCase();
+  if (type.startsWith("image/")) return true;
+  if (type === "application/pdf" || name.endsWith(".pdf")) return true;
+  return false;
+}
+
+function fileToB64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ""));
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(file);
+  });
+}
+
+function renderChips() {
+  const box = $("chips");
+  box.innerHTML = "";
+  if (!pendingFiles.length) {
+    box.classList.remove("show");
+    return;
+  }
+  box.classList.add("show");
+  pendingFiles.forEach((f, i) => {
+    const chip = document.createElement("div");
+    chip.className = "chip";
+    const span = document.createElement("span");
+    span.textContent = f.name;
+    const x = document.createElement("button");
+    x.type = "button";
+    x.textContent = "×";
+    x.title = "Remove";
+    x.onclick = () => { pendingFiles.splice(i, 1); renderChips(); };
+    chip.appendChild(span);
+    chip.appendChild(x);
+    box.appendChild(chip);
+  });
+}
+
+async function takeFiles(list) {
+  const incoming = Array.from(list || []).filter(okFile);
+  if (!incoming.length) return;
+  pendingFiles = pendingFiles.concat(incoming).slice(0, 6);
+  renderChips();
+}
+
 async function send() {
   const text = $("input").value.trim();
-  if (!text || busy || sending) return;
+  if ((!text && !pendingFiles.length) || busy || sending) return;
   sending = true;
   busy = true;
-  pendingUser = text;
+  pendingUser = text || "Please use the attached file(s).";
   lastSig = "";
   $("send").disabled = true;
   $("input").value = "";
   chrome.storage.local.set({ composerDraft: "" });
+  const queued = pendingFiles.slice();
+  pendingFiles = [];
+  renderChips();
   try {
     if (!token) await pair();
+    const files = queued.length ? await uploadPendingQueued(queued) : [];
     const tab = await currentTab();
     const r = await fetch(RELAY + "/ask", {
       method: "POST",
       headers: await headers(),
-      body: JSON.stringify({ text, ...tab }),
+      body: JSON.stringify({ text, files, ...tab }),
     });
     const data = await r.json();
     if (!data.ok) {
@@ -177,6 +232,8 @@ async function send() {
       sending = false;
       busy = false;
       $("send").disabled = false;
+      pendingFiles = queued.concat(pendingFiles);
+      renderChips();
       addMsg("bot", data.error === "busy"
         ? "Hermes is still working on the last request."
         : (data.error || "ask failed"));
@@ -190,12 +247,35 @@ async function send() {
     sending = false;
     busy = false;
     $("send").disabled = false;
+    pendingFiles = queued.concat(pendingFiles);
+    renderChips();
     addMsg("bot", String(e));
   }
   $("input").focus();
 }
 
+async function uploadPendingQueued(queued) {
+  const out = [];
+  for (const f of queued) {
+    const data = await fileToB64(f);
+    const r = await fetch(RELAY + "/upload", {
+      method: "POST",
+      headers: await headers(),
+      body: JSON.stringify({ name: f.name, mime: f.type, data }),
+    });
+    const j = await r.json();
+    if (!j.ok) throw new Error(j.message || j.error || "upload failed");
+    out.push({ path: j.path, name: j.name, kind: j.kind });
+  }
+  return out;
+}
+
 $("send").onclick = send;
+$("attach").onclick = () => $("file").click();
+$("file").addEventListener("change", () => {
+  takeFiles($("file").files);
+  $("file").value = "";
+});
 $("input").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -205,8 +285,40 @@ $("input").addEventListener("keydown", (e) => {
 $("input").addEventListener("input", () => {
   chrome.storage.local.set({ composerDraft: $("input").value });
 });
+$("input").addEventListener("paste", (e) => {
+  const items = e.clipboardData && e.clipboardData.files;
+  if (items && items.length) {
+    const ok = Array.from(items).filter(okFile);
+    if (ok.length) {
+      e.preventDefault();
+      takeFiles(ok);
+    }
+  }
+});
 
-addMsg("sys", "Same thread as Hermes chat “hermes-chrome-panel”. Alt+H opens this panel. Draft is kept if you close it.");
+let dragDepth = 0;
+document.addEventListener("dragenter", (e) => {
+  e.preventDefault();
+  dragDepth += 1;
+  document.body.classList.add("drag");
+});
+document.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+});
+document.addEventListener("dragleave", (e) => {
+  e.preventDefault();
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) document.body.classList.remove("drag");
+});
+document.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove("drag");
+  takeFiles(e.dataTransfer && e.dataTransfer.files);
+});
+
+addMsg("sys", "Same thread as Hermes chat “hermes-chrome-panel”. Alt+H opens this panel. Drop image or PDF here.");
 pair().then(async () => {
   ping();
   tick();

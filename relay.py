@@ -32,7 +32,7 @@ from urllib.parse import parse_qs, urlparse
 
 HOST = "127.0.0.1"
 PORT = 19882
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 SESSION_TITLE = "hermes-chrome-panel"
 TAB_CTX_MARK = "[[hermes-chrome-tab]]"
 DEFAULT_CMD_TIMEOUT = 60.0
@@ -73,6 +73,47 @@ def screenshot_dir() -> Path:
     p = state_dir() / "screenshots"
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def upload_dir() -> Path:
+    p = state_dir() / "uploads"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+_IMAGE_SUFFIX = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+_OK_SUFFIX = _IMAGE_SUFFIX | {".pdf"}
+
+
+def save_upload(*, name: str, mime: str, b64: str) -> Dict[str, Any]:
+    raw_name = Path(str(name or "file")).name
+    suffix = Path(raw_name).suffix.lower()
+    if suffix not in _OK_SUFFIX:
+        guessed = { "image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif", "application/pdf": ".pdf" }.get((mime or "").split(";")[0].strip().lower(), "")
+        suffix = guessed
+    if suffix not in _OK_SUFFIX:
+        return {"ok": False, "error": "type", "message": "Only images (png/jpg/webp/gif) and PDF."}
+    if "," in (b64 or ""):
+        b64 = b64.split(",", 1)[1]
+    try:
+        data = base64.b64decode(b64 or "")
+    except Exception:
+        return {"ok": False, "error": "bad_data"}
+    if not data:
+        return {"ok": False, "error": "empty"}
+    if len(data) > 15 * 1024 * 1024:
+        return {"ok": False, "error": "too_large", "message": "Max 15 MB per file."}
+    stem = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in Path(raw_name).stem)[:40] or "file"
+    dest = upload_dir() / f"{stem}_{uuid.uuid4().hex[:8]}{suffix}"
+    dest.write_bytes(data)
+    return {
+        "ok": True,
+        "path": str(dest),
+        "name": dest.name,
+        "mime": mime or "",
+        "bytes": len(data),
+        "kind": "image" if suffix in _IMAGE_SUFFIX else "pdf",
+    }
 
 
 def token_path() -> Path:
@@ -310,6 +351,9 @@ def _hermes_bin() -> str:
 def _run_ask(job_id: str, prompt: str) -> None:
     prompt_file = state_dir() / "ask.txt"
     prompt_file.write_text(prompt, encoding="utf-8")
+    images: list = []
+    with _ask_lock:
+        images = list(_ask_job.get("images") or [])
     try:
         env = os.environ.copy()
         local = os.environ.get("LOCALAPPDATA") or str(Path.home())
@@ -334,6 +378,9 @@ def _run_ask(job_id: str, prompt: str) -> None:
             "-s",
             "hermes-chrome",
         ]
+        for img in images:
+            if img:
+                cmd.extend(["--image", str(img)])
         proc = subprocess.run(
             cmd,
             capture_output=True,
@@ -392,10 +439,32 @@ def start_ask(
     title: str = "",
     tab_id: Any = None,
     selection: str = "",
+    files: Optional[list] = None,
 ) -> Dict[str, Any]:
     text = (text or "").strip()
-    if not text:
+    saved: list = []
+    for item in files or []:
+        if not isinstance(item, dict):
+            continue
+        p = Path(str(item.get("path") or ""))
+        if not p.is_file():
+            continue
+        try:
+            if upload_dir().resolve() not in p.resolve().parents and p.resolve().parent != upload_dir().resolve():
+                continue
+        except OSError:
+            continue
+        kind = "image" if p.suffix.lower() in _IMAGE_SUFFIX else "pdf"
+        saved.append({"path": str(p), "name": p.name, "kind": kind})
+    if not text and not saved:
         return {"ok": False, "error": "empty"}
+    if not text:
+        text = "Please use the attached file(s)."
+    if saved:
+        lines = [text, "", "Attached files (read these with file/vision tools):"]
+        for f in saved:
+            lines.append(f"- {f['path']}")
+        text = "\n".join(lines)
     with _ask_lock:
         if _ask_job.get("status") == "running":
             return {"ok": False, "error": "busy", "job": dict(_ask_job)}
@@ -412,6 +481,7 @@ def start_ask(
                 "started": time.time(),
                 "url": url,
                 "title": title,
+                "images": [f["path"] for f in saved if f["kind"] == "image"],
             }
         )
     threading.Thread(target=_run_ask, args=(job_id, prompt), name="hermes-chrome-ask", daemon=True).start()
@@ -577,6 +647,18 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, {"ok": True, "path": str(dest), "bytes": len(raw)})
             return
 
+        if path == "/upload":
+            if not self._token_ok():
+                self._send(401, {"ok": False, "error": "bad_token"})
+                return
+            result = save_upload(
+                name=str(body.get("name") or "file"),
+                mime=str(body.get("mime") or ""),
+                b64=str(body.get("data") or body.get("b64") or ""),
+            )
+            self._send(200 if result.get("ok") else 400, result)
+            return
+
         if path == "/cmd":
             # Agent is local; token required so random localhost clients cannot drive Chrome.
             if not self._token_ok():
@@ -597,6 +679,7 @@ class _Handler(BaseHTTPRequestHandler):
                 title=str(body.get("title") or ""),
                 tab_id=body.get("tab_id"),
                 selection=str(body.get("selection") or ""),
+                files=body.get("files") if isinstance(body.get("files"), list) else None,
             )
             self._send(200 if result.get("ok") else 409, result)
             return

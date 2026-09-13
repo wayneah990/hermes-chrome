@@ -1,7 +1,7 @@
 ---
 name: hermes-chrome
 description: Drive real Chrome via the Hermes Chrome extension. Prefer over computer_use.
-version: 1.0.5
+version: 1.0.6
 ---
 
 # Hermes Chrome
