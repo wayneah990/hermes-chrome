@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Hermes Chrome",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Let Hermes Agent control this Chrome browser — Claude in Chrome equivalent. CDP clicks, typing, snapshots, tabs.",
   "permissions": [
     "debugger",
@@ -25,12 +25,21 @@
     "default_path": "sidepanel.html"
   },
   "action": {
-    "default_title": "Hermes Chrome",
+    "default_title": "Hermes Chrome (Alt+H)",
     "default_icon": {
       "16": "icons/lady-16.png",
       "32": "icons/lady-32.png",
       "48": "icons/lady-48.png",
       "128": "icons/lady-128.png"
+    }
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+H",
+        "mac": "Alt+H"
+      },
+      "description": "Open the Hermes Chrome side panel"
     }
   },
   "icons": {

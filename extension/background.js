@@ -28,7 +28,10 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === "hermes-start") startPoll();
 });
 chrome.debugger.onDetach.addListener((src) => {
-  if (src && src.tabId) attached.delete(src.tabId);
+  if (src && src.tabId) {
+    attached.delete(src.tabId);
+    unmarkDriven(src.tabId);
+  }
 });
 if (chrome.windows && chrome.windows.onCreated) {
   chrome.windows.onCreated.addListener(() => {
@@ -350,6 +353,31 @@ async function attachDbg(tabId) {
   if (isRestricted(t.url)) throw new Error("restricted_url: " + t.url);
   await chrome.debugger.attach({ tabId }, "1.3");
   attached.add(tabId);
+  markDriven(tabId);
+}
+
+function markDriven(tabId) {
+  chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      if (document.getElementById("hermes-chrome-driven")) return;
+      const el = document.createElement("div");
+      el.id = "hermes-chrome-driven";
+      el.textContent = "Hermes is driving this tab";
+      el.setAttribute("style", "position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:2147483647;background:#c9a227;color:#121216;font:12px/1.2 ui-sans-serif,system-ui,sans-serif;font-weight:650;padding:6px 14px;border-radius:999px;pointer-events:none;opacity:.92;box-shadow:0 2px 10px #0006");
+      document.documentElement.appendChild(el);
+    },
+  }).catch(() => {});
+}
+
+function unmarkDriven(tabId) {
+  chrome.scripting.executeScript({
+    target: { tabId },
+    func: () => {
+      const el = document.getElementById("hermes-chrome-driven");
+      if (el) el.remove();
+    },
+  }).catch(() => {});
 }
 
 async function cdp(tabId, method, params) {

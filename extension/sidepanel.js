@@ -122,7 +122,16 @@ async function ping() {
 async function currentTab() {
   const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   const t = tabs && tabs[0];
-  return t ? { tab_id: t.id, url: t.url || "", title: t.title || "" } : {};
+  if (!t) return {};
+  let selection = "";
+  try {
+    const inj = await chrome.scripting.executeScript({
+      target: { tabId: t.id },
+      func: () => (window.getSelection && window.getSelection().toString()) || "",
+    });
+    selection = ((inj && inj[0] && inj[0].result) || "").trim().slice(0, 1500);
+  } catch (_) {}
+  return { tab_id: t.id, url: t.url || "", title: t.title || "", selection };
 }
 
 async function tick() {
@@ -153,6 +162,7 @@ async function send() {
   lastSig = "";
   $("send").disabled = true;
   $("input").value = "";
+  chrome.storage.local.set({ composerDraft: "" });
   try {
     if (!token) await pair();
     const tab = await currentTab();
@@ -192,11 +202,21 @@ $("input").addEventListener("keydown", (e) => {
     send();
   }
 });
+$("input").addEventListener("input", () => {
+  chrome.storage.local.set({ composerDraft: $("input").value });
+});
 
-addMsg("sys", "Same thread as Hermes chat “hermes-chrome-panel”. Every question and answer shows here and there.");
-pair().then(() => { ping(); tick(); }).catch((e) => {
+addMsg("sys", "Same thread as Hermes chat “hermes-chrome-panel”. Alt+H opens this panel. Draft is kept if you close it.");
+pair().then(async () => {
+  ping();
+  tick();
+  const stored = await chrome.storage.local.get(["composerDraft"]);
+  if (stored.composerDraft && !$("input").value) {
+    $("input").value = stored.composerDraft;
+  }
+}).catch((e) => {
   setState("connect failed", "");
   addMsg("sys", String(e));
 });
 setInterval(ping, 4000);
-setInterval(tick, 1000);
+setInterval(tick, 400);

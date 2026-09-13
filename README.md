@@ -20,6 +20,9 @@ Your Chrome windows & tabs
 - **`chrome` tool** — `status`, `tabs`, `navigate`, `snapshot` (refs `e1`…), `click`/`fill`/`type`/`key`, `screenshot`, `js`
 - **Side panel chat** — type an instruction on the current tab (same idea as Claude in Chrome)
 - **Shared thread** — Chrome side panel and Hermes session `hermes-chrome-panel` show the same questions and answers
+- **Alt+H** — open the side panel (customize at `chrome://extensions/shortcuts`)
+- Unsent draft survives closing the panel
+- Gold pill on a tab while Hermes is driving it
 - Existing logins stay; orange **Hermes** tab group for agent tabs
 - Copy icon on messages (ChatGPT-style)
 
@@ -74,7 +77,7 @@ chrome(action="click", ref="e3")
 
 URL-only jobs: `navigate` or `new_tab` and stop. Snapshot only when you will click or fill.
 
-**From Chrome:** open the side panel and type what you want done on this tab.
+**From Chrome:** open the side panel (`Alt+H`) and type what you want done on this tab. Highlighted text on the page is sent as untrusted context.
 
 You can keep using **another Chrome window** while Hermes works. Do not click inside the same tab it is driving.
 
