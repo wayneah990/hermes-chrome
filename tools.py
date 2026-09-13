@@ -27,10 +27,9 @@ CHROME_SCHEMA: Dict[str, Any] = {
         "no computer_use, no focus steal, no separate Chromium profile. "
         "ALWAYS prefer this over computer_use / browser_exec for any web task "
         "once the extension is connected. "
-        "Workflow: status → tabs → navigate → snapshot (interactive refs e1, e2…) "
-        "→ click/fill/type by ref → screenshot to verify. "
-        "If the tool returns chrome_extension_disconnected, tell the user to Load "
-        "unpacked the extension folder (hermes chrome install) and click Connect."
+        "Workflow: status → navigate/new_tab for a URL (NO snapshot) → snapshot "
+        "ONLY before click/fill/hover → click/fill by ref → screenshot to verify. "
+        "If chrome_extension_disconnected: hermes chrome start; Chrome auto-connects."
     ),
     "parameters": {
         "type": "object",
@@ -65,8 +64,8 @@ CHROME_SCHEMA: Dict[str, Any] = {
                 "description": (
                     "status=relay+extension health; "
                     "tabs=list open tabs; new_tab/close_tab/switch_tab; "
-                    "navigate to url; back/forward/reload; "
-                    "snapshot=a11y tree with refs (use filter=interactive); "
+                    "navigate to url (URL-only jobs: navigate and stop, no snapshot); back/forward/reload; "
+                    "snapshot=a11y tree with refs — ONLY before click/fill (filter=interactive); "
                     "click/dblclick/right_click/hover by ref or coordinate; "
                     "fill=set form value by ref (React-safe); type=keystrokes; "
                     "key=chord like ctrl+a or Enter; scroll; screenshot=PNG path; "

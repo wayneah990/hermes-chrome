@@ -44,9 +44,9 @@ def _print_install() -> int:
     print("  1. Open chrome://extensions")
     print("  2. Turn on Developer mode (top right)")
     print("  3. Load unpacked  →  select the Ext folder above")
-    print("  4. Pin 'Hermes Chrome', click it, press Connect")
+    print("  4. Pin 'Hermes Chrome' (one-time). It connects when Chrome starts.")
     print()
-    print("Then in any Hermes chat: chrome(action=\"status\") then navigate/snapshot/click.")
+    print("Then in any Hermes chat: chrome(action=\"status\") then navigate (URL) or snapshot+click.")
     return 0
 
 

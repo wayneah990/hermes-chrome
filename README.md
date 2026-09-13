@@ -56,13 +56,13 @@ Then in Chrome:
 1. Open `chrome://extensions`
 2. Turn on **Developer mode**
 3. **Load unpacked** → the `extension/` folder inside this repo
-4. Pin **Hermes Chrome**, click it (side panel), wait until it says **connected**
+4. Pin **Hermes Chrome** once. It connects when Chrome starts — no puzzle-icon click.
 
 Toolbar icons are cached by Chrome. After an icon change, **Reload** the extension or fully quit Chrome.
 
 ## Use
 
-**From any Hermes chat** (after a new session so the plugin is loaded):
+**From any Hermes chat** (the `chrome` tool is native — not hidden behind tool_search):
 
 ```
 chrome(action="status")
@@ -70,6 +70,8 @@ chrome(action="navigate", url="https://example.com")
 chrome(action="snapshot", filter="interactive")
 chrome(action="click", ref="e3")
 ```
+
+URL-only jobs: `navigate` or `new_tab` and stop. Snapshot only when you will click or fill.
 
 **From Chrome:** open the side panel and type what you want done on this tab.
 

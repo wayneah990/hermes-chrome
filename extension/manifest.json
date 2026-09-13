@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Hermes Chrome",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Let Hermes Agent control this Chrome browser — Claude in Chrome equivalent. CDP clicks, typing, snapshots, tabs.",
   "permissions": [
     "debugger",
@@ -11,6 +11,7 @@
     "storage",
     "sidePanel",
     "alarms",
+    "offscreen",
     "unlimitedStorage"
   ],
   "host_permissions": [

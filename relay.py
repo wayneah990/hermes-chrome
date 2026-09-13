@@ -18,6 +18,7 @@ import os
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -28,7 +29,7 @@ from urllib.parse import parse_qs, urlparse
 
 HOST = "127.0.0.1"
 PORT = 19882
-VERSION = "1.0.0"
+VERSION = "1.0.3"
 DEFAULT_CMD_TIMEOUT = 60.0
 PULL_MAX_WAIT = 12.0
 EXTENSION_STALE_S = 25.0
@@ -235,7 +236,8 @@ def start_ask(text: str, *, url: str = "", title: str = "", tab_id: Any = None) 
             f"Current tab url: {url or '(unknown)'}\n"
             f"Current tab_id: {tab_id if tab_id is not None else '(use chrome tabs/snapshot)'}\n\n"
             "Drive THIS Chrome with the chrome tool. Do not use computer_use or browser_exec. "
-            "Workflow: chrome(action=\"snapshot\") then click/fill by ref. "
+            "If they only gave a URL, navigate to it and stop — no snapshot. "
+            "Snapshot only when you will click or fill, then act by ref. "
             "Answer in the same language the user used.\n\n"
             f"The user said:\n{text}\n"
         )
@@ -452,8 +454,60 @@ def is_our_relay() -> bool:
         return False
 
 
-def start_relay(*, daemon: bool = True) -> str:
-    """Start the relay in this process, or attach to one already bound on PORT."""
+def pid_path() -> Path:
+    return state_dir() / "relay.pid"
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        handle = ctypes.windll.kernel32.OpenProcess(0x100000, False, int(pid))
+        if handle:
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return True
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _kill_pid(pid: int) -> None:
+    if pid <= 0:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(pid), "/F"],
+            capture_output=True,
+            check=False,
+        )
+        return
+    try:
+        os.kill(pid, 15)
+    except OSError:
+        pass
+
+
+def _read_pid() -> int:
+    try:
+        return int(pid_path().read_text(encoding="utf-8").strip())
+    except Exception:
+        return 0
+
+
+def _write_pid(pid: int) -> None:
+    try:
+        pid_path().write_text(str(int(pid)), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _start_inprocess(*, daemon: bool = True) -> str:
+    """Bind the HTTP server in this process (used by the detached child)."""
     global _server, _thread
     if _server is not None:
         return "already-running"
@@ -473,7 +527,59 @@ def start_relay(*, daemon: bool = True) -> str:
     return "started"
 
 
+def _spawn_detached() -> str:
+    """Start relay.py as its own OS process so a CLI exit cannot kill it."""
+    if is_our_relay():
+        return "attached-existing"
+    script = Path(__file__).resolve()
+    py = sys.executable
+    if os.name == "nt":
+        pythonw = Path(py).with_name("pythonw.exe")
+        if pythonw.is_file():
+            py = str(pythonw)
+    kw: Dict[str, Any] = {
+        "args": [py, str(script)],
+        "cwd": str(script.parent),
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "env": os.environ.copy(),
+        "close_fds": os.name != "nt",
+    }
+    if os.name == "nt":
+        kw["creationflags"] = int(
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        )
+    else:
+        kw["start_new_session"] = True
+    subprocess.Popen(**kw)
+    for _ in range(30):
+        time.sleep(0.2)
+        if is_our_relay():
+            return "started-detached"
+    return ""
+
+
+def start_relay(*, daemon: bool = True) -> str:
+    """Ensure the relay is up. Prefer a detached process so CLI exit does not kill it."""
+    if is_our_relay():
+        return "attached-existing"
+    if daemon:
+        spawned = _spawn_detached()
+        if spawned:
+            return spawned
+    return _start_inprocess(daemon=daemon)
+
+
 def stop_relay() -> None:
+    pid = _read_pid()
+    if pid and pid != os.getpid() and _pid_alive(pid):
+        _kill_pid(pid)
+    try:
+        pid_path().unlink()
+    except OSError:
+        pass
     global _server, _thread
     if _server is not None:
         try:
@@ -487,7 +593,10 @@ def stop_relay() -> None:
 if __name__ == "__main__":
     print(f"Hermes Chrome relay on http://{HOST}:{PORT}")
     print(f"token: {get_or_create_token()}")
-    start_relay(daemon=False)
+    status = _start_inprocess(daemon=False)
+    if status != "started":
+        raise SystemExit(0)
+    _write_pid(os.getpid())
     try:
         while True:
             time.sleep(3600)

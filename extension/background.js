@@ -10,14 +10,19 @@ chrome.runtime.onInstalled.addListener(async () => {
     await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
   } catch (_) {}
   chrome.alarms.create("hermes-keep", { periodInMinutes: 0.5 });
+  await ensureOffscreen();
   startPoll();
 });
-chrome.runtime.onStartup.addListener(() => {
+chrome.runtime.onStartup.addListener(async () => {
   chrome.alarms.create("hermes-keep", { periodInMinutes: 0.5 });
+  await ensureOffscreen();
   startPoll();
 });
 chrome.alarms.onAlarm.addListener((a) => {
-  if (a.name === "hermes-keep") startPoll();
+  if (a.name === "hermes-keep") {
+    ensureOffscreen();
+    startPoll();
+  }
 });
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg && msg.type === "hermes-start") startPoll();
@@ -25,8 +30,35 @@ chrome.runtime.onMessage.addListener((msg) => {
 chrome.debugger.onDetach.addListener((src) => {
   if (src && src.tabId) attached.delete(src.tabId);
 });
+if (chrome.windows && chrome.windows.onCreated) {
+  chrome.windows.onCreated.addListener(() => {
+    ensureOffscreen();
+    startPoll();
+  });
+}
 
+ensureOffscreen();
 startPoll();
+
+async function ensureOffscreen() {
+  if (!chrome.offscreen) return;
+  try {
+    const ctxs = await chrome.runtime.getContexts({
+      contextTypes: ["OFFSCREEN_DOCUMENT"],
+    });
+    if (ctxs && ctxs.length) return;
+  } catch (_) {}
+  try {
+    await chrome.offscreen.createDocument({
+      url: "offscreen.html",
+      reasons: ["DOM_SCRAPING"],
+      justification: "Keep Hermes Chrome connected to the localhost relay",
+    });
+  } catch (e) {
+    const msg = String(e && e.message ? e.message : e);
+    if (/already exists/i.test(msg)) return;
+  }
+}
 
 async function getToken() {
   const s = await chrome.storage.local.get(["token"]);
@@ -621,9 +653,28 @@ async function scroll(tabId, cmd) {
 }
 
 async function screenshot(tabId) {
-  await chrome.tabs.update(tabId, { active: true });
-  await sleep(150);
-  const dataUrl = await chrome.tabs.captureVisibleTab(undefined, { format: "png" });
+  let dataUrl = "";
+  let method = "captureVisibleTab";
+  try {
+    await chrome.tabs.update(tabId, { active: true });
+    await sleep(150);
+    dataUrl = await chrome.tabs.captureVisibleTab(undefined, { format: "png" });
+    if (!dataUrl) throw new Error("empty_capture");
+  } catch (e) {
+    method = "cdp_Page.captureScreenshot";
+    await attachDbg(tabId);
+    try { await cdp(tabId, "Page.enable", {}); } catch (_) {}
+    let shot = null;
+    try {
+      shot = await cdp(tabId, "Page.captureScreenshot", { format: "png", fromSurface: true });
+    } catch (_) {
+      shot = await cdp(tabId, "Page.captureScreenshot", { format: "png" });
+    }
+    if (!shot || !shot.data) {
+      throw new Error("screenshot_failed: " + String(e && e.message ? e.message : e));
+    }
+    dataUrl = "data:image/png;base64," + shot.data;
+  }
   const token = await getToken();
   const r = await fetch(RELAY + "/screenshot", {
     method: "POST",
@@ -631,7 +682,7 @@ async function screenshot(tabId) {
     body: JSON.stringify({ png_base64: dataUrl }),
   });
   const saved = await r.json();
-  return { ok: !!saved.ok, path: saved.path, bytes: saved.bytes, ...(await tabInfo(tabId)) };
+  return { ok: !!saved.ok, path: saved.path, bytes: saved.bytes, method, ...(await tabInfo(tabId)) };
 }
 
 async function evalJs(tabId, code) {
