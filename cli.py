@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 import webbrowser
 from pathlib import Path
@@ -28,6 +29,10 @@ def register_cli(subparser: argparse.ArgumentParser) -> None:
     subs.add_parser("stop", help="Stop the in-process relay (other processes keep theirs)")
     subs.add_parser("status", help="Relay + extension connection")
     subs.add_parser("open", help="Open chrome://extensions in the default browser")
+    subs.add_parser(
+        "revive",
+        help="Start relay and Reload the unpacked Hermes Chrome extension without a human",
+    )
 
 
 def _print_install() -> int:
@@ -67,6 +72,13 @@ def chrome_command(args: argparse.Namespace) -> int:
         print("Opened chrome://extensions (if the OS allowed it).")
         print("Otherwise paste chrome://extensions into Chrome yourself.")
         return 0
+    if cmd == "revive":
+        script = Path(__file__).resolve().parent / "scripts" / "revive_extension.py"
+        if not script.is_file():
+            print(f"missing {script}", file=sys.stderr)
+            return 1
+        r = subprocess.run([sys.executable, str(script)])
+        return int(r.returncode or 0)
     # status
     if not is_our_relay():
         try:

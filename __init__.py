@@ -81,6 +81,12 @@ def register(ctx) -> None:
             ctx.register_skill("hermes-chrome", str(_SKILL_DIR))
         except Exception:
             pass
+    revive_dir = _PLUGIN_DIR / "skills" / "hermes-chrome-revive"
+    if (revive_dir / "SKILL.md").is_file():
+        try:
+            ctx.register_skill("hermes-chrome-revive", str(revive_dir))
+        except Exception:
+            pass
 
     try:
         start_relay()

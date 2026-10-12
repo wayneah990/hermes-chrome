@@ -88,7 +88,9 @@ You can keep using **another Chrome window** while Hermes works. Do not click in
 hermes chrome install   # print Load-unpacked path, mint token, start relay
 hermes chrome start
 hermes chrome status
+hermes chrome revive    # Reload unpacked extension without a human (Windows)
 hermes chrome stop
+hermes chrome open
 ```
 
 ## Security

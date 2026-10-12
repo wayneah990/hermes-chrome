@@ -24,11 +24,11 @@ Chrome side panel and Hermes Desktop session **hermes-chrome-panel** are the sam
 
 Relay auto-starts with Hermes and stays up after CLI exit. The extension connects when Chrome starts (no puzzle-icon click). If `chrome(action="status")` says `extension_connected: false`:
 
-1. Chrome → `chrome://extensions` → Developer mode ON
-2. Load unpacked → this repo's `extension/` folder (`hermes chrome install` prints the path)
-3. Retry `status` — do not ask the user to click Connect
+1. `hermes chrome start` then **`chrome(action="tabs")` anyway** — status often lies.
+2. If `tabs` fails: `hermes chrome revive` (reloads the unpacked extension; no human). See skill `hermes-chrome-revive`.
+3. Do **not** ask the user to click Connect.
 
-CLI: `hermes chrome install` / `hermes chrome start` / `hermes chrome status`
+CLI: `hermes chrome install` / `start` / `status` / `revive`
 
 ## Procedure
 
